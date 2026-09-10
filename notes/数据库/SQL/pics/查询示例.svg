@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="232" viewBox="0 0 640 232" role="img" aria-labelledby="title desc">
+  <title id="title">students 示例数据表</title><desc id="desc">三条学生记录，列为 id、name、age、city。</desc>
+  <rect width="640" height="232" rx="10" fill="#f9fbff"/>
+  <rect x="20" y="20" width="600" height="40" rx="5" fill="#e8effc"/>
+  <g stroke="#dee6f2"><path d="M20 106h600M20 152h600M20 198h600"/></g>
+  <g font-family="Consolas, Microsoft YaHei, sans-serif" font-size="16" fill="#344766">
+    <g font-weight="bold" fill="#2459d3"><text x="44" y="46">id</text><text x="159" y="46">name</text><text x="336" y="46">age</text><text x="464" y="46">city</text></g>
+    <text x="44" y="90">1</text><text x="159" y="90">Alice</text><text x="336" y="90">23</text><text x="464" y="90">长春</text>
+    <text x="44" y="136">2</text><text x="159" y="136">Bob</text><text x="336" y="136">21</text><text x="464" y="136">珠海</text>
+    <text x="44" y="182">3</text><text x="159" y="182">Carol</text><text x="336" y="182">24</text><text x="464" y="182">长春</text>
+  </g>
+  <text x="22" y="218" font-family="Consolas, sans-serif" font-size="11" fill="#74839c">EXAMPLE DATA / students</text>
+</svg>

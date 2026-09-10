@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="按主题整理的学习笔记，支持两级分类和全文搜索。">
+  <title>学习笔记 · yulinww</title>
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script src="../assets/site.js" type="module"></script>
+  <script src="../assets/notes.js" type="module"></script>
+</head>
+<body data-page="notes">
+  <a class="skip-link" href="#main">跳至正文</a>
+  <!--HEADER-->
+  <main id="main" class="container notes-main">
+    <div class="page-heading"><div><p class="eyebrow">LEARN · THINK · WRITE</p><h1>学习笔记<span class="title-period">.</span></h1><p class="muted">记录问题，整理思路，也收藏每一次「原来如此」。</p></div><span class="heading-count"><!--NOTE_COUNT--> 篇笔记</span></div>
+    <div class="library-layout">
+      <!--SIDEBAR-->
+      <section class="notes-content" aria-labelledby="list-title">
+        <div class="search-field">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
+          <label class="sr-only" for="note-search">搜索笔记标题或正文</label>
+          <input id="note-search" type="search" placeholder="搜索标题或正文…" autocomplete="off" disabled>
+          <kbd aria-hidden="true">/</kbd>
+        </div>
+        <div class="list-toolbar"><h2 id="list-title">全部笔记</h2><span id="result-count" class="muted" role="status" aria-live="polite"><!--NOTE_COUNT--> 篇</span></div>
+        <p id="search-status" class="search-status" role="status" hidden></p>
+        <div id="note-list" class="note-list"><!--NOTE_LIST--></div>
+        <noscript><p class="notice">启用 JavaScript 后可使用分类筛选和全文搜索。你仍可以阅读全部笔记。</p></noscript>
+        <div id="empty-state" class="empty-state" hidden><span class="empty-icon" aria-hidden="true">⌕</span><h3>暂时没有找到笔记</h3><p>试试其他关键词，或返回全部笔记。</p><button id="reset-search" class="button button-secondary" type="button">清除筛选</button></div>
+      </section>
+    </div>
+  </main>
+  <!--FOOTER-->
+</body>
+</html>
