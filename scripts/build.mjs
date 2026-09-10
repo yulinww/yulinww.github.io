@@ -117,23 +117,23 @@ async function walk(dir, prefix = "") {
   return files;
 }
 
-function gitDates(root) {
-  const dates = new Map();
+function gitUpdateTimes(root) {
+  const times = new Map();
   try {
     // Keep CJK filenames readable in Git's output.
-    const readable = execFileSync("git", ["-c", "core.quotepath=false", "log", "--format=DATE:%cs", "--name-only", "--", "notes"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 * 1024 * 1024 });
-    let date = "";
+    const readable = execFileSync("git", ["-c", "core.quotepath=false", "log", "--format=DATE:%cI", "--name-only", "--", "notes"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 * 1024 * 1024 });
+    let updatedAt = "";
     for (const line of readable.split(/\r?\n/)) {
-      if (line.startsWith("DATE:")) date = line.slice(5);
-      else if (line && date && !dates.has(line)) dates.set(line, date);
+      if (line.startsWith("DATE:")) updatedAt = line.slice(5);
+      else if (line && updatedAt && !times.has(line)) times.set(line, updatedAt);
     }
   } catch { /* A repository without commits uses the file modification date. */ }
-  return dates;
+  return times;
 }
 
 export async function loadNotes(root = projectRoot) {
   const files = await walk(path.join(root, "notes"));
-  const dates = gitDates(root);
+  const times = gitUpdateTimes(root);
   const notes = [];
   const errors = [];
   const urls = new Set();
@@ -145,25 +145,71 @@ export async function loadNotes(root = projectRoot) {
       const key = note.url.toLowerCase();
       if (urls.has(key)) throw new Error(relative + "：生成的地址与其他文件冲突，请检查大小写和扩展名。");
       urls.add(key);
-      note.updated = dates.get(relative) || (await stat(full)).mtime.toISOString().slice(0, 10);
+      const updatedAt = times.get(relative) || (await stat(full)).mtime.toISOString();
+      // Keep the original calendar date for display; sort using an absolute timestamp.
+      note.updated = updatedAt.slice(0, 10);
+      note.updatedAt = new Date(updatedAt).toISOString();
       notes.push(note);
     } catch (error) { errors.push(error.message); }
   }
   if (errors.length) throw new Error("笔记检查未通过：\n" + errors.map((message) => "  • " + message).join("\n"));
-  return notes.sort((a, b) => b.updated.localeCompare(a.updated) || collator.compare(a.source, b.source));
+  return notes.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || collator.compare(a.source, b.source));
 }
 
-export function categoriesFor(notes) {
+export async function readSiteConfig(root = projectRoot) {
+  let config;
+  try {
+    config = JSON.parse((await readFile(path.join(root, "site.config.json"), "utf8")).replace(/^\uFEFF/, ""));
+  } catch (error) {
+    if (error.code === "ENOENT") return { categoryOrder: [], subcategoryOrder: {} };
+    throw new Error("site.config.json 无法读取：" + error.message);
+  }
+  const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  if (!isObject(config)) throw new Error("site.config.json 必须是 JSON 对象。");
+  for (const key of Object.keys(config)) {
+    if (!["categoryOrder", "subcategoryOrder"].includes(key)) throw new Error("site.config.json 包含未知字段：" + key);
+  }
+  function validateOrder(value, field) {
+    if (!Array.isArray(value) || value.some((name) => typeof name !== "string" || !name.trim())) {
+      throw new Error("site.config.json 的 " + field + " 必须是非空分类名称组成的数组（允许空数组）。");
+    }
+    if (new Set(value).size !== value.length) throw new Error("site.config.json 的 " + field + " 有重复的分类名称。");
+  }
+  const categoryOrder = config.categoryOrder === undefined ? [] : config.categoryOrder;
+  const subcategoryOrder = config.subcategoryOrder === undefined ? {} : config.subcategoryOrder;
+  validateOrder(categoryOrder, "categoryOrder");
+  if (!isObject(subcategoryOrder)) throw new Error("site.config.json 的 subcategoryOrder 必须是 JSON 对象。");
+  for (const [category, order] of Object.entries(subcategoryOrder)) {
+    if (!category.trim()) throw new Error("site.config.json 的 subcategoryOrder 不能使用空分类名。");
+    validateOrder(order, "subcategoryOrder." + category);
+  }
+  return { categoryOrder, subcategoryOrder };
+}
+
+function orderComparator(order = []) {
+  const positions = new Map(order.map((name, index) => [name, index]));
+  return (a, b) => {
+    const aIndex = positions.get(a) ?? order.length;
+    const bIndex = positions.get(b) ?? order.length;
+    return aIndex - bIndex || collator.compare(a, b);
+  };
+}
+
+export function categoriesFor(notes, { categoryOrder = [], subcategoryOrder = {} } = {}) {
   const groups = new Map();
   for (const note of notes) {
     if (!groups.has(note.category)) groups.set(note.category, new Map());
     const subs = groups.get(note.category);
     subs.set(note.subcategory, (subs.get(note.subcategory) || 0) + 1);
   }
-  return [...groups].sort(([a], [b]) => collator.compare(a, b)).map(([name, subs]) => ({
-    name, count: [...subs.values()].reduce((a, b) => a + b, 0),
-    children: [...subs].sort(([a], [b]) => collator.compare(a, b)).map(([name, count]) => ({ name, count }))
-  }));
+  const compareCategory = orderComparator(categoryOrder);
+  return [...groups].sort(([a], [b]) => compareCategory(a, b)).map(([name, subs]) => {
+    const compareSubcategory = orderComparator(Object.hasOwn(subcategoryOrder, name) ? subcategoryOrder[name] : []);
+    return {
+      name, count: [...subs.values()].reduce((a, b) => a + b, 0),
+      children: [...subs].sort(([a], [b]) => compareSubcategory(a, b)).map(([name, count]) => ({ name, count }))
+    };
+  });
 }
 
 function filterUrl(base, category = "", subcategory = "") {
@@ -247,8 +293,9 @@ export async function buildSite({ root = projectRoot, output = path.join(root, "
   root = path.resolve(root);
   output = path.resolve(output);
   if (output !== path.join(root, "dist")) throw new Error("输出目录必须为当前项目的 dist 子目录。");
+  const config = await readSiteConfig(root);
   const notes = await loadNotes(root); // Validate before touching the previous build.
-  const categories = categoriesFor(notes);
+  const categories = categoriesFor(notes, config);
   try {
     const resolvedOutput = await realpath(output);
     const resolvedRoot = await realpath(root);

@@ -20,9 +20,14 @@ async function rebuild() {
     if (queued) { queued = false; await rebuild(); }
   }
 }
-const watchers = ["notes", "assets", "resume", "index.html"].map((entry) => watch(path.join(projectRoot, entry), { recursive: true }, () => {
+function scheduleRebuild() {
   clearTimeout(timer);
   timer = setTimeout(rebuild, 200);
+}
+const watchers = ["notes", "assets", "resume"].map((entry) => watch(path.join(projectRoot, entry), { recursive: true }, scheduleRebuild));
+// Watch the directory so replacing/temporarily removing a config file still works.
+watchers.push(watch(projectRoot, (_event, filename) => {
+  if (["index.html", "site.config.json"].includes(String(filename))) scheduleRebuild();
 }));
 function close() {
   clearTimeout(timer);

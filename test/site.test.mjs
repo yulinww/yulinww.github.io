@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, cp, writeFile, readFile, stat, readdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, cp, writeFile, readFile, stat, readdir, rm, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
-import { getNoteMeta, compileNote, categoriesFor, buildSite, projectRoot, resumeDownload, encodePath } from "../scripts/build.mjs";
+import { execFileSync } from "node:child_process";
+import { getNoteMeta, compileNote, categoriesFor, loadNotes, readSiteConfig, buildSite, projectRoot, resumeDownload, encodePath } from "../scripts/build.mjs";
 import { filterNotes, highlightParts, searchSnippet } from "../assets/notes-model.js";
 import { startServer } from "../scripts/serve.mjs";
 
@@ -151,7 +152,7 @@ test("完整构建：共享图片、特殊路径、独立文章页、原文、�
   assert.equal((first.match(/<h1 /g) || []).length, 1);
   assert.ok((await stat(path.join(root, "dist", prefix, "pics/共享 图片.svg"))).isFile());
   const data = JSON.parse(await readFile(path.join(root, "dist/assets/notes-index.json"), "utf8"));
-  assert.equal(data.notes[0].url, encodePath(prefix + "1.html"));
+  assert.equal(data.notes.find((item) => item.source === prefix + "1.md").url, encodePath(prefix + "1.html"));
   assert.equal(data.categories[0].children[0].count, 2);
   assert.ok((await stat(path.join(root, "dist", prefix, "1.md"))).isFile());
   const index = await readFile(path.join(root, "dist/index.html"), "utf8");
@@ -233,4 +234,123 @@ test("本地服务：主页、分类页、中文文章、404 以及 MIME 类型"
   assert.equal((await fetch(origin + "/notes", { redirect: "manual" })).status, 301);
   assert.equal((await fetch(origin + "/", { method: "POST" })).status, 405);
   assert.equal((await fetch(origin + "/%E0%A4%A")).status, 400);
+});
+
+test("指定两级分类顺序，未配置项目追加，空分类不出现，归属和网址不变", () => {
+  const items = [
+    ...records,
+    note("# 新子类", "notes/数据库/子类10/1.md"),
+    note("# 新子类", "notes/数据库/子类2/1.md"),
+    note("# 另一个 SQL", "notes/后端/SQL/1.md")
+  ];
+  const before = JSON.stringify(items);
+  const groups = categoriesFor(items, {
+    categoryOrder: ["空分类", "后端", "数据库"],
+    subcategoryOrder: { 数据库: ["空子类", "MySQL", "SQL"], 后端: ["SQL"] }
+  });
+  assert.deepEqual(groups.map((group) => group.name), ["后端", "数据库", "AI Agent"]);
+  assert.deepEqual(groups[1].children.map((sub) => sub.name), ["MySQL", "SQL", "子类2", "子类10"]);
+  assert.equal(groups[0].children[0].count, 1);
+  assert.equal(groups[1].count, 4);
+  assert.equal(JSON.stringify(items), before);
+});
+
+test("可选排序配置可校验，配置错误不会覆盖已有构建", async (t) => {
+  const root = await createFixture(t);
+  assert.deepEqual(await readSiteConfig(root), { categoryOrder: [], subcategoryOrder: {} });
+  await buildSite({ root });
+  const before = await readFile(path.join(root, "dist/index.html"), "utf8");
+  for (const invalid of [
+    null, [], { order: [] }, { categoryOrder: "数据库" }, { categoryOrder: [3] },
+    { categoryOrder: [""] }, { categoryOrder: ["数据库", "数据库"] },
+    { subcategoryOrder: [] }, { subcategoryOrder: { 数据库: ["SQL", "SQL"] } },
+    { subcategoryOrder: { 数据库: null } }
+  ]) {
+    await writeFixture(root, "site.config.json", JSON.stringify(invalid));
+    await assert.rejects(buildSite({ root }), /site\.config\.json/);
+    assert.equal(await readFile(path.join(root, "dist/index.html"), "utf8"), before);
+  }
+  await writeFixture(root, "site.config.json", "{ invalid JSON");
+  await assert.rejects(readSiteConfig(root), /site\.config\.json/);
+  await writeFixture(root, "site.config.json", "\uFEFF" + JSON.stringify({ categoryOrder: ["数据库"] }));
+  assert.deepEqual(await readSiteConfig(root), { categoryOrder: ["数据库"], subcategoryOrder: {} });
+});
+
+test("首页、笔记侧栏、文章侧栏和索引使用同一份自定义分类顺序", async (t) => {
+  const root = await createFixture(t);
+  const sources = ["notes/数据库/SQL/1.md", "notes/数据库/MySQL/1.md", "notes/开发工具/GitHub/1.md", "notes/AI Agent/RAG/1.md"];
+  for (const source of sources) await writeFixture(root, source, "# 示例标题\n\n正文");
+  await writeFixture(root, "site.config.json", JSON.stringify({
+    categoryOrder: ["AI Agent", "数据库", "开发工具"],
+    subcategoryOrder: { 数据库: ["MySQL", "SQL"] }
+  }));
+  await buildSite({ root });
+  const data = JSON.parse(await readFile(path.join(root, "dist/assets/notes-index.json"), "utf8"));
+  const expected = ["AI Agent", "数据库", "开发工具"];
+  assert.deepEqual(data.categories.map((category) => category.name), expected);
+  assert.deepEqual(data.categories[1].children.map((category) => category.name), ["MySQL", "SQL"]);
+  const home = await readFile(path.join(root, "dist/index.html"), "utf8");
+  const homeOrder = [...home.matchAll(/class="home-category-link" href="([^"]+)"/g)].map((match) => new URL(match[1], "https://site.test/").searchParams.get("category"));
+  assert.deepEqual(homeOrder, expected);
+  for (const file of ["notes/index.html", ...sources.map((source) => source.replace(".md", ".html"))]) {
+    const html = await readFile(path.join(root, "dist", file), "utf8");
+    assert.deepEqual([...html.matchAll(/<summary><span>(.*?)<\/span>/g)].map((match) => match[1]), expected);
+    const subcategories = [...html.matchAll(/data-category="数据库" data-subcategory="([^"]+)"/g)].map((match) => match[1]);
+    assert.deepEqual(subcategories, ["MySQL", "SQL"]);
+  }
+});
+
+test("无 Git 记录时也按完整修改时间排序，同一秒内的先后不丢失", async (t) => {
+  const root = await createFixture(t);
+  for (const [file, time] of [["a.md", "2026-09-10T10:00:00.100Z"], ["z.md", "2026-09-10T10:00:00.900Z"]]) {
+    const source = "notes/数据库/SQL/" + file;
+    await writeFixture(root, source, "# " + file + "\n\n正文");
+    await utimes(path.join(root, source), new Date(time), new Date(time));
+  }
+  const items = await loadNotes(root);
+  assert.equal(items[0].source, "notes/数据库/SQL/z.md");
+  assert.equal(items[1].source, "notes/数据库/SQL/a.md");
+  assert.ok(Date.parse(items[0].updatedAt) > Date.parse(items[1].updatedAt));
+  assert.equal(items[0].updated, "2026-09-10");
+});
+
+test("Git 同日新文章与修改过的文章按完整提交时间排序，并正确处理时区", async (t) => {
+  const root = await createFixture(t);
+  const emptyHooks = path.join(root, "empty-hooks");
+  await mkdir(emptyHooks);
+  const runGit = (args, env = {}) => execFileSync("git", [
+    "-c", "core.hooksPath=" + emptyHooks,
+    "-c", "user.name=Site Tests", "-c", "user.email=site-tests@example.invalid",
+    ...args
+  ], { cwd: root, encoding: "utf8", stdio: "pipe", env: { ...process.env, ...env } });
+  runGit(["init", "--initial-branch=main", "--quiet"]);
+  async function commitNote(source, title, when) {
+    await writeFixture(root, source, "# " + title + "\n\n正文");
+    runGit(["add", "--", source]);
+    runGit(["commit", "--quiet", "--no-gpg-sign", "-m", title], {
+      GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when,
+      GIT_AUTHOR_NAME: "Site Tests", GIT_COMMITTER_NAME: "Site Tests",
+      GIT_AUTHOR_EMAIL: "site-tests@example.invalid", GIT_COMMITTER_EMAIL: "site-tests@example.invalid"
+    });
+  }
+  const older = "notes/数据库/SQL/a.md";
+  const newer = "notes/数据库/SQL/z.md";
+  await commitNote(older, "先提交", "2026-09-10T20:00:00+08:00"); // 12:00 UTC
+  await commitNote(newer, "后提交", "2026-09-10T13:00:00+00:00"); // Later despite the smaller local hour
+  let items = await loadNotes(root);
+  assert.equal(items[0].source, newer);
+  assert.equal(items[0].updatedAt, "2026-09-10T13:00:00.000Z");
+  assert.equal(items[1].updatedAt, "2026-09-10T12:00:00.000Z");
+  assert.equal(items[0].updated, items[1].updated);
+  await buildSite({ root });
+  let home = await readFile(path.join(root, "dist/index.html"), "utf8");
+  const firstRecent = (html) => html.match(/class="recent-note" href="([^"]+)"/)[1];
+  assert.equal(firstRecent(home), "./" + encodePath(newer.replace(".md", ".html")));
+  await commitNote(older, "修改旧文章", "2026-09-10T14:00:00+00:00");
+  items = await loadNotes(root);
+  assert.equal(items[0].source, older);
+  assert.equal(items[0].updatedAt, "2026-09-10T14:00:00.000Z");
+  await buildSite({ root });
+  home = await readFile(path.join(root, "dist/index.html"), "utf8");
+  assert.equal(firstRecent(home), "./" + encodePath(older.replace(".md", ".html")));
 });

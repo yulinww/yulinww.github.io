@@ -1,0 +1,16 @@
+{
+  "categoryOrder": [
+    "后端",
+    "开发工具",
+    "前端",
+    "数据库",
+    "AI Agent"
+  ],
+  "subcategoryOrder": {
+    "后端": ["HTTP"],
+    "开发工具": ["GitHub"],
+    "前端": ["CSS"],
+    "数据库": ["SQL", "MySQL"],
+    "AI Agent": ["LangChain", "LangGraph", "RAG"]
+  }
+}
