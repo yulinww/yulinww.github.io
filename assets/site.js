@@ -1,3 +1,9 @@
+import { startRelativeTimes } from "./article-meta.js";
+import { initAnalytics } from "./analytics.js";
+
+startRelativeTimes(document, window);
+initAnalytics(document, location);
+
 for (const toggle of document.querySelectorAll(".sidebar-toggle")) {
   toggle.addEventListener("click", () => {
     const expanded = toggle.getAttribute("aria-expanded") !== "true";

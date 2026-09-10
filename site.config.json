@@ -1,4 +1,9 @@
 {
+  "readingCharsPerMinute": 450,
+  "analytics": {
+    "enabled": true,
+    "hostname": "yulinww.github.io"
+  },
   "categoryOrder": [
     "开发工具",
     "前端",

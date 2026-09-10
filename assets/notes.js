@@ -1,4 +1,5 @@
 import { filterNotes, searchSnippet, highlightParts } from "./notes-model.js";
+import { formatUpdatedAt, readingLabel, updateRelativeTimes } from "./article-meta.js";
 
 const input = document.querySelector("#note-search");
 const list = document.querySelector("#note-list");
@@ -53,11 +54,19 @@ function makeCard(note, query) {
   const summary = element("p");
   highlight(summary, searchSnippet(note, query), query);
   const bottom = element("div", "note-card-bottom");
-  const time = element("time", "", note.updated.replaceAll("-", "."));
-  time.dateTime = note.updated;
+  const updated = element("span", "updated-at");
+  const timestamp = note.updatedAt || note.updated;
+  const label = note.updatedAt ? formatUpdatedAt(timestamp) : note.updated.replaceAll("-", ".");
+  const time = element("time", "", "更新于 " + label);
+  time.dateTime = timestamp;
+  time.title = "北京时间";
+  const relative = element("span");
+  if (note.updatedAt) relative.dataset.relativeTime = timestamp;
+  relative.hidden = true;
+  updated.append(time, relative);
   const arrow = element("span", "read-arrow", "↗");
   arrow.setAttribute("aria-hidden", "true");
-  bottom.append(time, element("span", "", "约 " + note.readingMinutes + " 分钟"), arrow);
+  bottom.append(updated, element("span", "", readingLabel(note)), arrow);
   card.append(meta, heading, summary, bottom);
   return card;
 }
@@ -69,6 +78,7 @@ function render() {
   const fragment = document.createDocumentFragment();
   for (const note of results) fragment.append(makeCard(note, state.query));
   list.replaceChildren(fragment);
+  updateRelativeTimes(list);
   empty.hidden = results.length > 0;
   title.textContent = state.category ? state.category + (state.subcategory ? " / " + state.subcategory : "") : "全部笔记";
   count.textContent = results.length + " 篇" + (state.query ? "匹配" : "");

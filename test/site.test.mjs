@@ -5,11 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
 import { execFileSync } from "node:child_process";
-import { getNoteMeta, compileNote, categoriesFor, loadNotes, readSiteConfig, buildSite, projectRoot, resumeDownload, encodePath } from "../scripts/build.mjs";
+import { getNoteMeta, compileNote, categoriesFor, loadNotes, readSiteConfig, buildSite, projectRoot, resumeDownload, encodePath, withSiteFeatures } from "../scripts/build.mjs";
 import { filterNotes, highlightParts, searchSnippet } from "../assets/notes-model.js";
 import { startServer } from "../scripts/serve.mjs";
 
 const note = (text, file = "notes/数据库/SQL/1.md") => getNoteMeta(text, file);
+const defaultFeatures = { readingCharsPerMinute: 450, analytics: { enabled: true, hostname: "yulinww.github.io" } };
 
 test("分类仅取目录，展示标题取第一行 H1，支持长标题和特殊符号", () => {
   const title = 'SQL / WHERE：<条件>、"引号"、? 与 | ' + "长标题".repeat(40);
@@ -257,14 +258,19 @@ test("指定两级分类顺序，未配置项目追加，空分类不出现，�
 
 test("可选排序配置可校验，配置错误不会覆盖已有构建", async (t) => {
   const root = await createFixture(t);
-  assert.deepEqual(await readSiteConfig(root), { categoryOrder: [], subcategoryOrder: {} });
+  assert.deepEqual(await readSiteConfig(root), { categoryOrder: [], subcategoryOrder: {}, ...defaultFeatures });
   await buildSite({ root });
   const before = await readFile(path.join(root, "dist/index.html"), "utf8");
   for (const invalid of [
     null, [], { order: [] }, { categoryOrder: "数据库" }, { categoryOrder: [3] },
     { categoryOrder: [""] }, { categoryOrder: ["数据库", "数据库"] },
     { subcategoryOrder: [] }, { subcategoryOrder: { 数据库: ["SQL", "SQL"] } },
-    { subcategoryOrder: { 数据库: null } }
+    { subcategoryOrder: { 数据库: null } }, { readingCharsPerMinute: 0 },
+    { readingCharsPerMinute: -450 }, { readingCharsPerMinute: 2.5 },
+    { readingCharsPerMinute: "450" }, { readingCharsPerMinute: null },
+    { analytics: null }, { analytics: [] }, { analytics: { enabled: "true" } },
+    { analytics: { hostname: "https://yulinww.github.io/" } },
+    { analytics: { hostname: 'site.test"><script>' } }, { analytics: { unknown: true } }
   ]) {
     await writeFixture(root, "site.config.json", JSON.stringify(invalid));
     await assert.rejects(buildSite({ root }), /site\.config\.json/);
@@ -273,7 +279,7 @@ test("可选排序配置可校验，配置错误不会覆盖已有构建", async
   await writeFixture(root, "site.config.json", "{ invalid JSON");
   await assert.rejects(readSiteConfig(root), /site\.config\.json/);
   await writeFixture(root, "site.config.json", "\uFEFF" + JSON.stringify({ categoryOrder: ["数据库"] }));
-  assert.deepEqual(await readSiteConfig(root), { categoryOrder: ["数据库"], subcategoryOrder: {} });
+  assert.deepEqual(await readSiteConfig(root), { categoryOrder: ["数据库"], subcategoryOrder: {}, ...defaultFeatures });
 });
 
 test("首页、笔记侧栏、文章侧栏和索引使用同一份自定义分类顺序", async (t) => {
@@ -353,4 +359,66 @@ test("Git 同日新文章与修改过的文章按完整提交时间排序，并�
   await buildSite({ root });
   home = await readFile(path.join(root, "dist/index.html"), "utf8");
   assert.equal(firstRecent(home), "./" + encodePath(older.replace(".md", ".html")));
+});
+
+test("字数剔除格式和链接地址，保留标题、正文、图片说明与代码文字", () => {
+  const item = note("# **标题**\n\n中 文 [链接](https://example.com/long-url) ![图片](pics/a.png)\n\n```js\nlet a = 1;\n```\n\n`SQL` 😀");
+  const expected = Array.from("标题中文链接图片leta=1;SQL😀").length;
+  assert.equal(item.wordCount, expected);
+  assert.equal(item.readingMinutes, 1);
+});
+
+test("文章、列表和索引使用统一字数、阅读速度、完整时间与下载文案", async (t) => {
+  const root = await createFixture(t);
+  const source = "notes/数据库/SQL/1.md";
+  await writeFixture(root, source, "# 标\n\n" + "文".repeat(899));
+  const date = new Date("2026-09-10T09:00:48Z");
+  await utimes(path.join(root, source), date, date);
+  await writeFixture(root, "site.config.json", JSON.stringify({ readingCharsPerMinute: 300 }));
+  await buildSite({ root });
+  const data = JSON.parse(await readFile(path.join(root, "dist/assets/notes-index.json"), "utf8"));
+  assert.equal(data.notes[0].wordCount, 900);
+  assert.equal(data.notes[0].readingMinutes, 3);
+  assert.equal(data.notes[0].updatedAt, date.toISOString());
+  for (const file of ["notes/index.html", source.replace(".md", ".html")]) {
+    const html = await readFile(path.join(root, "dist", file), "utf8");
+    assert.match(html, /更新于 2026年9月10日 17:00:48/);
+    assert.match(html, /datetime="2026-09-10T09:00:48.000Z"/);
+    assert.match(html, /data-relative-time="2026-09-10T09:00:48.000Z" hidden/);
+    assert.match(html, /约900字，预计阅读时间3分钟/);
+    assert.doesNotMatch(html, /约 \d+ 分钟/);
+  }
+  const article = await readFile(path.join(root, "dist", source.replace(".md", ".html")), "utf8");
+  assert.match(article, /href="[^\"]+1.md" download/);
+  assert.match(article, /下载原文Markdown/);
+  assert.doesNotMatch(article, /Markdown 原文/);
+  // Rebuilding an untouched article must not turn its update time into deployment time.
+  await buildSite({ root });
+  const next = JSON.parse(await readFile(path.join(root, "dist/assets/notes-index.json"), "utf8"));
+  assert.equal(next.notes[0].updatedAt, data.notes[0].updatedAt);
+});
+
+test("全站接入公共统计，首页仅展示站点 PV，文章仅展示当前文章 PV", async (t) => {
+  const root = await createFixture(t);
+  const source = "notes/数据库/SQL/1.md";
+  await writeFixture(root, source, "# 统计测试");
+  await buildSite({ root });
+  for (const file of ["index.html", "resume/index.html", "notes/index.html", "404.html", source.replace(".md", ".html")]) {
+    const html = await readFile(path.join(root, "dist", file), "utf8");
+    assert.equal((html.match(/<script[^>]*src="[^"]*assets\/site.js"/g) || []).length, 1, file);
+    assert.equal((html.match(/name="site-analytics-host" content="yulinww.github.io"/g) || []).length, 1, file);
+    assert.equal(html.includes('id="busuanzi_value_site_pv"'), file === "index.html", file);
+    assert.equal(html.includes('id="busuanzi_value_page_pv"'), file === source.replace(".md", ".html"), file);
+    assert.doesNotMatch(html, /busuanzi_value_site_uv/);
+    if (file === "index.html") assert.match(html, /style="display:none">本站总访问量 <span/);
+    if (file === source.replace(".md", ".html")) assert.match(html, /style="display:none">本文总阅读量 <span/);
+  }
+  // Same public feature injection works for a future section, with no notes/ dependency.
+  const config = await readSiteConfig(root);
+  const future = withSiteFeatures('<html><head><title>随笔</title></head><body>未来文章</body></html>', "../../", config);
+  assert.match(future, /src="..\/..\/assets\/site.js"/);
+  assert.match(future, /site-analytics-host/);
+  await writeFixture(root, "site.config.json", JSON.stringify({ analytics: { enabled: false } }));
+  await buildSite({ root });
+  assert.doesNotMatch(await readFile(path.join(root, "dist/index.html"), "utf8"), /site-analytics-host/);
 });

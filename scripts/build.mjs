@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import MarkdownIt from "markdown-it";
 import hljs from "highlight.js";
+import { DEFAULT_READING_SPEED, readingStats, readingLabel, formatUpdatedAt } from "../assets/article-meta.js";
 
 export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const collator = new Intl.Collator("zh-CN", { numeric: true });
@@ -24,7 +25,7 @@ function slugify(text) {
   return text.toLowerCase().trim().replace(/[^\p{L}\p{N}\s_-]/gu, "").replace(/\s/g, "-") || "section";
 }
 
-export function getNoteMeta(source, relativePath) {
+export function getNoteMeta(source, relativePath, { readingCharsPerMinute = DEFAULT_READING_SPEED } = {}) {
   const pieces = relativePath.replaceAll("\\", "/").split("/");
   if (pieces.length !== 4 || pieces[0] !== "notes" || !/\.md$/i.test(pieces[3])) {
     throw new Error(relativePath + "：笔记必须位于 notes/一级分类/二级分类/文件.md，仅支持两级分类。");
@@ -42,12 +43,11 @@ export function getNoteMeta(source, relativePath) {
   const searchText = texts.join("\n");
   const firstParagraph = tokens.findIndex((token) => token.type === "paragraph_open" && token.level === 0);
   const summary = firstParagraph >= 0 ? inlineText(tokens[firstParagraph + 1].children) : texts.join(" ");
-  const characters = (title + searchText).replace(/\s/g, "").length;
   return {
     source: relativePath, category: pieces[1], subcategory: pieces[2], title, body,
     url: encodePath(relativePath.replace(/\.md$/i, ".html")),
     summary: summary.replace(/\s+/g, " ").slice(0, 140),
-    searchText, readingMinutes: Math.max(1, Math.ceil(characters / 450)),
+    searchText, ...readingStats(title + searchText, readingCharsPerMinute),
     titleId: slugify(title)
   };
 }
@@ -131,7 +131,7 @@ function gitUpdateTimes(root) {
   return times;
 }
 
-export async function loadNotes(root = projectRoot) {
+export async function loadNotes(root = projectRoot, options = {}) {
   const files = await walk(path.join(root, "notes"));
   const times = gitUpdateTimes(root);
   const notes = [];
@@ -141,7 +141,7 @@ export async function loadNotes(root = projectRoot) {
     const relative = "notes/" + file;
     try {
       const full = path.join(root, relative);
-      const note = getNoteMeta(await readFile(full, "utf8"), relative);
+      const note = getNoteMeta(await readFile(full, "utf8"), relative, options);
       const key = note.url.toLowerCase();
       if (urls.has(key)) throw new Error(relative + "：生成的地址与其他文件冲突，请检查大小写和扩展名。");
       urls.add(key);
@@ -161,13 +161,13 @@ export async function readSiteConfig(root = projectRoot) {
   try {
     config = JSON.parse((await readFile(path.join(root, "site.config.json"), "utf8")).replace(/^\uFEFF/, ""));
   } catch (error) {
-    if (error.code === "ENOENT") return { categoryOrder: [], subcategoryOrder: {} };
-    throw new Error("site.config.json 无法读取：" + error.message);
+    if (error.code === "ENOENT") config = {};
+    else throw new Error("site.config.json 无法读取：" + error.message);
   }
   const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
   if (!isObject(config)) throw new Error("site.config.json 必须是 JSON 对象。");
   for (const key of Object.keys(config)) {
-    if (!["categoryOrder", "subcategoryOrder"].includes(key)) throw new Error("site.config.json 包含未知字段：" + key);
+    if (!["categoryOrder", "subcategoryOrder", "readingCharsPerMinute", "analytics"].includes(key)) throw new Error("site.config.json 包含未知字段：" + key);
   }
   function validateOrder(value, field) {
     if (!Array.isArray(value) || value.some((name) => typeof name !== "string" || !name.trim())) {
@@ -183,7 +183,19 @@ export async function readSiteConfig(root = projectRoot) {
     if (!category.trim()) throw new Error("site.config.json 的 subcategoryOrder 不能使用空分类名。");
     validateOrder(order, "subcategoryOrder." + category);
   }
-  return { categoryOrder, subcategoryOrder };
+  const readingCharsPerMinute = config.readingCharsPerMinute === undefined ? DEFAULT_READING_SPEED : config.readingCharsPerMinute;
+  if (!Number.isSafeInteger(readingCharsPerMinute) || readingCharsPerMinute <= 0) {
+    throw new Error("site.config.json 的 readingCharsPerMinute 必须为正整数。");
+  }
+  const analytics = { enabled: true, hostname: "yulinww.github.io", ...config.analytics };
+  if ((config.analytics !== undefined && !isObject(config.analytics)) ||
+      Object.keys(analytics).some((key) => !["enabled", "hostname"].includes(key)) ||
+      typeof analytics.enabled !== "boolean" || typeof analytics.hostname !== "string" ||
+      !/^(?:[a-z\d](?:[a-z\d-]*[a-z\d])?\.)+[a-z]{2,}$/i.test(analytics.hostname)) {
+    throw new Error("site.config.json 的 analytics 需要布尔值 enabled 和不含协议、端口或路径的 hostname。");
+  }
+  analytics.hostname = analytics.hostname.toLowerCase();
+  return { categoryOrder, subcategoryOrder, readingCharsPerMinute, analytics };
 }
 
 function orderComparator(order = []) {
@@ -227,9 +239,31 @@ function header(base, active) {
     '</nav><a class="github-link" href="https://github.com/yulinww" target="_blank" rel="noopener noreferrer" aria-label="GitHub（在新标签页打开）"><svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .8a11.4 11.4 0 0 0-3.6 22.2c.6.1.8-.2.8-.5v-2.2c-3.4.7-4.1-1.4-4.1-1.4-.5-1.3-1.3-1.6-1.3-1.6-1.1-.8.1-.8.1-.8 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.8 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.6.1-3.3 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.7.2 3 .1 3.3.8.8 1.2 1.8 1.2 3.1 0 4.5-2.8 5.5-5.5 5.8.4.4.8 1.1.8 2.2v3.1c0 .3.2.6.8.5A11.4 11.4 0 0 0 12 .8Z"/></svg><span>GitHub</span></a></div></header>';
 }
 
-function footer(base) {
+function visitorCount(kind) {
+  const label = kind === "site" ? "本站总访问量" : "本文总阅读量";
+  return '<span class="visitor-count" id="busuanzi_container_' + kind + '_pv" style="display:none">' +
+    label + ' <span id="busuanzi_value_' + kind + '_pv"></span> 次</span>';
+}
+
+function footer(base, home = false) {
   return '<footer class="site-footer"><div class="container footer-inner"><span class="footer-signature">© ' +
-    new Date().getFullYear() + ' yulinww</span><span>保持好奇，持续积累。 <a href="' + base + 'notes/">继续阅读 ↗</a></span></div></footer>';
+    new Date().getFullYear() + ' yulinww</span>' + (home ? visitorCount("site") : "") +
+    '<span>保持好奇，持续积累。 <a href="' + base + 'notes/">继续阅读 ↗</a></span></div></footer>';
+}
+
+// Applied to every generated page, including future sections and 404 pages.
+export function withSiteFeatures(html, base, config) {
+  if (!/<\/head>/i.test(html)) throw new Error("页面缺少 </head>，无法注入公共功能。");
+  let additions = config.analytics.enabled ? '<meta name="site-analytics-host" content="' + escapeHtml(config.analytics.hostname) + '">' : "";
+  if (!/<script\b[^>]*\bsrc=["'][^"']*assets\/site\.js["']/i.test(html)) {
+    additions += '<script src="' + base + 'assets/site.js" type="module"></script>';
+  }
+  return html.replace(/<\/head>/i, additions + "</head>");
+}
+
+function updatedTime(note) {
+  return '<span class="updated-at"><time datetime="' + note.updatedAt + '" title="北京时间">更新于 ' +
+    formatUpdatedAt(note.updatedAt) + '</time><span data-relative-time="' + note.updatedAt + '" hidden></span></span>';
 }
 
 function sidebar(categories, base, note) {
@@ -251,8 +285,8 @@ function sidebar(categories, base, note) {
 function noteCard(note, base) {
   return '<a class="note-card" href="' + base + note.url + '"><div class="note-card-meta"><span>' + escapeHtml(note.category) +
     '</span><span aria-hidden="true">/</span><span>' + escapeHtml(note.subcategory) + "</span></div><h3>" + escapeHtml(note.title) + "</h3><p>" +
-    escapeHtml(note.summary) + '</p><div class="note-card-bottom"><time datetime="' + note.updated + '">' + note.updated.replaceAll("-", ".") +
-    '</time><span>约 ' + note.readingMinutes + ' 分钟</span><span class="read-arrow" aria-hidden="true">↗</span></div></a>';
+    escapeHtml(note.summary) + '</p><div class="note-card-bottom">' + updatedTime(note) + '<span>' + readingLabel(note) +
+    '</span><span class="read-arrow" aria-hidden="true">↗</span></div></a>';
 }
 
 function articlePage(note, categories) {
@@ -270,9 +304,10 @@ function articlePage(note, categories) {
     '</a><span aria-hidden="true">/</span><a href="' + escapeHtml(filterUrl(base, note.category, note.subcategory)) + '">' + escapeHtml(note.subcategory) +
     '</a></nav><div class="article-layout">' + sidebar(categories, base, note) +
     '<article class="article-content"><header class="article-heading"><p class="eyebrow">' + escapeHtml(note.category + " / " + note.subcategory) +
-    '</p><h1 id="' + escapeHtml(note.titleId) + '">' + title + '</h1><div class="article-meta"><time datetime="' + note.updated + '">更新于 ' +
-    note.updated.replaceAll("-", ".") + "</time><span>约 " + note.readingMinutes + ' 分钟</span><a href="' + base + encodePath(note.source) +
-    '" download>Markdown 原文 ↗</a></div></header><div class="prose">' + html +
+    '</p><h1 id="' + escapeHtml(note.titleId) + '">' + title + '</h1><div class="article-meta">' + updatedTime(note) +
+    '<div class="article-stats"><span>' + readingLabel(note) + '</span>' + visitorCount("page") +
+    '</div><a class="markdown-download" href="' + base + encodePath(note.source) +
+    '" download><span aria-hidden="true">↓ </span>下载原文Markdown</a></div></header><div class="prose">' + html +
     '</div><div class="article-end"><a href="' + escapeHtml(filterUrl(base, note.category, note.subcategory)) +
     '">← 返回此分类</a><a href="#' + encodeURIComponent(note.titleId) + '">回到顶部 ↑</a></div></article><details class="article-toc" open><summary>本页目录</summary><nav aria-label="文章目录">' +
     tocHtml + "</nav></details></div></main>" + footer(base) + "</body></html>";
@@ -294,7 +329,7 @@ export async function buildSite({ root = projectRoot, output = path.join(root, "
   output = path.resolve(output);
   if (output !== path.join(root, "dist")) throw new Error("输出目录必须为当前项目的 dist 子目录。");
   const config = await readSiteConfig(root);
-  const notes = await loadNotes(root); // Validate before touching the previous build.
+  const notes = await loadNotes(root, config); // Validate before touching the previous build.
   const categories = categoriesFor(notes, config);
   try {
     const resolvedOutput = await realpath(output);
@@ -308,11 +343,15 @@ export async function buildSite({ root = projectRoot, output = path.join(root, "
   await cp(path.join(root, "notes"), path.join(output, "notes"), { recursive: true, filter: (src) => !path.basename(src).startsWith(".") });
   await writeFile(path.join(output, ".nojekyll"), "");
   const hasPdf = await exists(path.join(root, "assets", "resume.pdf"));
+  async function writePage(file, html, base) {
+    await mkdir(path.dirname(path.join(output, file)), { recursive: true });
+    await writeFile(path.join(output, file), withSiteFeatures(html, base, config));
+  }
   const templates = [["index.html", "./", "home"], ["resume/index.html", "../", "resume"], ["notes/index.html", "../", "notes"]];
   for (const [file, base, page] of templates) {
     let html = await readFile(path.join(root, file), "utf8");
     const replacements = {
-      HEADER: header(base, page), FOOTER: footer(base), RESUME_DOWNLOAD: resumeDownload(hasPdf),
+      HEADER: header(base, page), FOOTER: footer(base, page === "home"), RESUME_DOWNLOAD: resumeDownload(hasPdf),
       NOTE_COUNT: String(notes.length), SIDEBAR: sidebar(categories, base),
       NOTE_LIST: notes.length ? notes.map((note) => noteCard(note, base)).join("\n") : '<div class="empty-state"><h3>笔记正在积累中</h3><p>这里将记录新的学习与思考。</p></div>',
       HOME_STATS: "<span>" + notes.length + " 篇笔记 · " + categories.length + " 个主题</span>",
@@ -325,19 +364,16 @@ export async function buildSite({ root = projectRoot, output = path.join(root, "
         escapeHtml(note.summary) + '</p></div><span aria-hidden="true">↗</span></a>').join("") : '<p class="notice">还没有笔记，下一次探索从这里开始。</p>'
     };
     html = html.replace(/<!--([A-Z_]+)-->/g, (marker, key) => replacements[key] ?? marker);
-    await mkdir(path.dirname(path.join(output, file)), { recursive: true });
-    await writeFile(path.join(output, file), html);
+    await writePage(file, html, base);
   }
   for (const note of notes) {
-    const file = path.join(output, note.source.replace(/\.md$/i, ".html"));
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, articlePage(note, categories));
+    await writePage(note.source.replace(/\.md$/i, ".html"), articlePage(note, categories), "../../../");
   }
   await writeFile(path.join(output, "assets", "notes-index.json"), JSON.stringify({
     notes: notes.map(({ body, titleId, ...note }) => note), categories
   }));
-  await writeFile(path.join(output, "404.html"), '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>页面未找到 · yulinww</title><link rel="stylesheet" href="/assets/styles.css"></head><body>' +
-    header("/", "") + '<main class="not-found"><h1>404</h1><h2>这页暂时找不到了</h2><p>链接可能已更新，去笔记目录看看吧。</p><a class="button button-primary" href="/notes/">返回学习笔记 →</a></main>' + footer("/") + "</body></html>");
+  await writePage("404.html", '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>页面未找到 · yulinww</title><link rel="stylesheet" href="/assets/styles.css"></head><body>' +
+    header("/", "") + '<main class="not-found"><h1>404</h1><h2>这页暂时找不到了</h2><p>链接可能已更新，去笔记目录看看吧。</p><a class="button button-primary" href="/notes/">返回学习笔记 →</a></main>' + footer("/") + "</body></html>", "/");
   return { notes: notes.length, categories: categories.length, output, hasPdf };
 }
 
