@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="390" viewBox="0 0 680 390" role="img" aria-labelledby="title desc">
+  <title id="title">LEFT JOIN：保留全部员工</title>
+  <desc id="desc">左圆员工全部着色，包含四组匹配和没有部门的陈晨。右侧财务部未着色，表示不保留。陈晨的部门字段补为NULL。</desc>
+  <defs><clipPath id="right"><circle cx="425" cy="193" r="128"/></clipPath></defs>
+  <rect width="680" height="390" rx="16" fill="#ffffff"/>
+  <g font-family="'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif" text-anchor="middle">
+    <text x="340" y="34" font-size="22" font-weight="700" fill="#243442">LEFT JOIN · 保留左侧全部记录</text>
+    <circle cx="425" cy="193" r="128" fill="#f3f5f7"/>
+    <circle cx="255" cy="193" r="128" fill="#f4c9c1"/>
+    <circle cx="255" cy="193" r="128" fill="#d36359" clip-path="url(#right)"/>
+    <g fill="none" stroke="#465562" stroke-width="2"><circle cx="255" cy="193" r="128"/><circle cx="425" cy="193" r="128"/></g>
+    <g fill="#243442" font-size="19" font-weight="700"><text x="211" y="155">员工 e</text><text x="469" y="155">部门 d</text></g>
+    <g fill="#653e38" font-size="16"><text x="211" y="196">陈晨也保留</text><text x="211" y="224">没有匹配部门</text><text x="211" y="253">部门填 NULL</text></g>
+    <g fill="#65717c" font-size="16"><text x="469" y="196">财务部</text><text x="469" y="224">没有员工</text><text x="469" y="253">不保留</text></g>
+    <g fill="#ffffff" font-size="16" font-weight="700"><text x="340" y="179">匹配</text><text x="340" y="204">保留</text><text x="340" y="229">4 组</text></g>
+    <text x="340" y="350" font-size="16" fill="#243442">连接条件：e.department_id = d.id</text>
+    <text x="340" y="375" font-size="14" fill="#65717c">本例结果：4 组匹配 + 1 名未匹配员工 = 5 行</text>
+  </g>
+</svg>

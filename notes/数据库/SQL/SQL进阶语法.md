@@ -688,37 +688,453 @@ mysql> SELECT
 
 ### LEFT JOIN
 
-返回左表中的所有记录，即使右表中没有匹配的记录（保留左表）。
+`LEFT JOIN`（左外连接）以左表为基础：左表的每条记录都保留，右表有匹配就补充对应信息，没有匹配就用`NULL`填充右表的字段。
+
+#### 语法
+
+```sql
+SELECT
+    l.column_name,
+    r.column_name
+FROM left_table AS l
+LEFT JOIN right_table AS r
+    ON l.related_column = r.related_column;
+```
+
+`LEFT JOIN`也可以写成`LEFT OUTER JOIN`，两者含义相同。`FROM`后面的是左表，`LEFT JOIN`后面的是右表。
+
+#### 说明
+
+**什么时候使用LEFT JOIN？** 当需求要求“完整保留某一类对象，同时补充它们可能存在的关联信息”时，应把必须保留的对象放在左表。例如，“列出所有员工及其部门，未分配部门的员工也不能漏掉”，就应以员工表为左表，使用`LEFT JOIN`连接部门表。
+
+如果使用`INNER JOIN`，陈晨因为没有对应部门而被排除；使用`LEFT JOIN`后，陈晨仍在员工名单中，只是部门名称显示为`NULL`。这种区别直接取决于需求是否允许遗漏没有关联信息的记录。类似地，“列出所有客户及其订单，无订单的客户也要保留”，也适合以客户表为左表使用左连接。
+
+- `ON`规定匹配条件。本例用`e.department_id = d.id`把员工与所属部门对应起来。
+- 找到匹配时，将左右两边的信息组合成一行；找不到匹配时，保留左表记录，并把右表字段填为`NULL`。这个`NULL`是在查询结果中补出的，不会写回原表。
+- 右表中没有匹配左表记录的行不会单独出现。因此，以员工表为左表时，无人任职的财务部不会出现。
+- “保留左表”不表示结果行数一定等于左表行数。如果一条左表记录匹配多条右表记录，就会生成多行。例如，以部门表为左表连接员工表时，技术部会对应张伟、李娜两行。
+- 表的顺序很重要：员工表放左边，保留全部员工；部门表放左边，保留全部部门。应先确定“哪些对象不能漏”，再决定左表。
+- 左连接完成后，`WHERE`仍会筛选结果。例如，添加`WHERE d.name = '技术部'`会排除陈晨，因为其右侧部门名称为`NULL`。因此，“保留全部左表记录”描述的是连接本身，后续筛选仍可能将记录排除。
+- 如需固定显示顺序，应使用`ORDER BY`。
+
+下面固定以员工表为左表、部门表为右表。左圆全部着色，包括中间匹配部分和左侧未匹配部分：
+
+![LEFT JOIN匹配范围：保留全部员工，包括未分配部门的陈晨](pics/left-join.svg)
+
+这张图表示保留范围，实际结果仍是按照连接条件组合记录，而不是直接对两张表进行集合运算：
+
+| 左表员工 | 匹配到的右表部门 | 是否进入结果 |
+| --- | --- | --- |
+| 张伟（部门编号1） | 技术部 | 是 |
+| 李娜（部门编号1） | 技术部 | 是 |
+| 王强（部门编号2） | 市场部 | 是 |
+| 赵敏（部门编号3） | 人事部 | 是 |
+| 陈晨（部门编号NULL） | 无匹配，部门字段补为`NULL` | 是 |
+| 没有对应员工 | 财务部 | 否，右表的未匹配记录不单独保留 |
+
+#### 示例
+
+查询全部员工及其部门名称，尚未分配部门的员工也要列出：
+
+```sql
+mysql> SELECT
+    ->     e.id AS employee_id,
+    ->     e.name AS employee_name,
+    ->     d.name AS department_name
+    -> FROM employees AS e
+    -> LEFT JOIN departments AS d
+    ->     ON e.department_id = d.id
+    -> ORDER BY e.id ASC;
++-------------+---------------+-----------------+
+| employee_id | employee_name | department_name |
++-------------+---------------+-----------------+
+|           1 | 张伟          | 技术部          |
+|           2 | 李娜          | 技术部          |
+|           3 | 王强          | 市场部          |
+|           4 | 赵敏          | 人事部          |
+|           5 | 陈晨          | NULL            |
++-------------+---------------+-----------------+
+5 rows in set (0.00 sec)
+```
+
+与前面的内连接相比，这里多出了陈晨一行；其员工编号和姓名来自左表，因此正常显示，部门名称因没有匹配记录而显示为`NULL`。财务部仍不出现，因为本次需求是列出全部员工，并非全部部门。
+
+左连接也常用于**查找没有关联记录的对象**。例如，只查询没有匹配部门的员工：
+
+```sql
+SELECT e.id, e.name
+FROM employees AS e
+LEFT JOIN departments AS d
+    ON e.department_id = d.id
+WHERE d.id IS NULL
+ORDER BY e.id ASC;
+```
+
+结果只有陈晨。这里检查的是右表主键`d.id`：它在真实部门记录中不可能为`NULL`，因此连接后出现`NULL`就说明没有匹配到部门。当前数据中也可以直接使用`e.department_id IS NULL`查到陈晨；这里展示的是可以用于检查关联记录是否存在的通用写法。
 
 
 
 ### RIGHT JOIN
 
-返回右表中的所有记录，即使左表中没有匹配的记录（保留右表）。
+`RIGHT JOIN`（右外连接）以右表为基础：右表的每条记录都保留，左表有匹配就补充对应信息，没有匹配就用`NULL`填充左表的字段。
+
+#### 语法
+
+```sql
+SELECT l.column_name, r.column_name
+FROM left_table AS l
+RIGHT JOIN right_table AS r
+    ON l.related_column = r.related_column;
+```
+
+`RIGHT JOIN`也可以写成`RIGHT OUTER JOIN`，两者含义相同。`FROM`后面的是左表，`RIGHT JOIN`后面的是右表。
+
+#### 说明
+
+**什么时候使用RIGHT JOIN？**当需求要求“完整保留右表中的对象，再补充左表可能存在的关联信息”时，可以使用右连接。例如，“列出所有部门及其员工，即使部门暂时没有员工，也必须出现在名单中”。如果员工表写在左边、部门表写在右边，就应使用`RIGHT JOIN`。
+
+本例中，财务部没有员工。如果使用`INNER JOIN`，财务部会被排除；使用`RIGHT JOIN`后，财务部仍然出现，只是员工信息显示为`NULL`。陈晨没有匹配部门，因此不会出现——这次要求完整列出的是部门，而不是员工。
+
+- `ON`规定两边的匹配关系，本例使用`e.department_id = d.id`。
+- 匹配成功时，将员工与部门的信息组合成一行；匹配失败时，保留右表部门，并将左表员工字段补为`NULL`。补出的`NULL`只存在于查询结果中，不会修改原表。
+- 右表的每条记录都会被保留，但不一定只产生一行。技术部有张伟、李娜两名员工，所以技术部会在结果中出现两次。本例有4个部门，连接结果有5行。
+- 左表中没有匹配右表记录的行不会单独保留，因此陈晨不会出现。
+- `RIGHT JOIN`与`LEFT JOIN`的核心区别是保留哪一侧。交换两张表的位置，并把`RIGHT JOIN`改成`LEFT JOIN`，保持连接条件和选取字段一致，可以得到相同的结果。
+- 连接后的`WHERE`仍会筛选结果。例如，添加`WHERE e.name = '张伟'`会排除财务部对应的行，因为该行的员工姓名为`NULL`。
+- `JOIN`不保证返回顺序，需要固定顺序时应使用`ORDER BY`。
+
+下面仍以员工表为左表、部门表为右表。右圆全部着色，包括中间的匹配部分和右侧没有员工的财务部：
+
+![RIGHT JOIN匹配范围：保留全部部门，包括没有员工的财务部](pics/right-join.svg)
+
+圆形图表示保留范围，实际查询按连接条件生成以下记录组合：
+
+| 左表员工 | 右表部门 | 是否进入结果 |
+| --- | --- | --- |
+| 张伟 | 技术部 | 是 |
+| 李娜 | 技术部 | 是 |
+| 王强 | 市场部 | 是 |
+| 赵敏 | 人事部 | 是 |
+| 无匹配，员工字段补为`NULL` | 财务部 | 是 |
+| 陈晨 | 没有匹配部门 | 否，左表的未匹配记录不单独保留 |
+
+#### 示例
+
+查询全部部门及其员工，尚无员工的部门也要列出：
+
+```sql
+mysql> SELECT
+    ->     d.id AS department_id,
+    ->     d.name AS department_name,
+    ->     e.name AS employee_name
+    -> FROM employees AS e
+    -> RIGHT JOIN departments AS d
+    ->     ON e.department_id = d.id
+    -> ORDER BY d.id ASC, e.id ASC;
++---------------+-----------------+---------------+
+| department_id | department_name | employee_name |
++---------------+-----------------+---------------+
+|             1 | 技术部          | 张伟          |
+|             1 | 技术部          | 李娜          |
+|             2 | 市场部          | 王强          |
+|             3 | 人事部          | 赵敏          |
+|             4 | 财务部          | NULL          |
++---------------+-----------------+---------------+
+5 rows in set (0.00 sec)
+```
+
+财务部虽然没有员工，但部门编号和名称仍正常显示；只有来自员工表的字段被补为`NULL`。技术部对应两名员工，因此产生两行。
+
+同一个需求也可以把部门表放在左边，用`LEFT JOIN`表达：
+
+```sql
+SELECT
+    d.id AS department_id,
+    d.name AS department_name,
+    e.name AS employee_name
+FROM departments AS d
+LEFT JOIN employees AS e
+    ON e.department_id = d.id
+ORDER BY d.id ASC, e.id ASC;
+```
+
+这两条查询返回相同结果。选择哪种写法，主要取决于表的排列方式和阅读习惯；把“必须完整保留的表”放在左边使用`LEFT JOIN`，通常更方便从左到右理解。
+
+如果只想找出尚无员工的部门，可以在右连接后检查左表主键是否为`NULL`：
+
+```sql
+SELECT d.id, d.name
+FROM employees AS e
+RIGHT JOIN departments AS d
+    ON e.department_id = d.id
+WHERE e.id IS NULL
+ORDER BY d.id ASC;
+```
+
+结果只有编号为`4`的财务部。真实员工记录的主键`e.id`不可能为`NULL`，因此这里的`NULL`说明连接时没有找到对应员工。
 
 
 
 ### FULL OUTER JOIN
 
-返回两个表的并集，包含匹配和不匹配的记录。
+`FULL OUTER JOIN`（全外连接）保留两边的全部记录：匹配成功的组合正常显示，两边各自没有匹配的记录也保留，缺失一侧的字段补为`NULL`。
+
+#### 语法
+
+下面是支持全外连接的数据库中的写法，**不能直接在MySQL中执行**：
+
+```sql
+SELECT e.name AS employee_name, d.name AS department_name
+FROM employees AS e
+FULL OUTER JOIN departments AS d
+    ON e.department_id = d.id;
+```
+
+MySQL可以用“全部左连接结果 + 右侧未匹配记录”实现，完整可执行写法见下面示例。
+
+#### 说明
+
+**什么时候使用？** 当需求是“两边的信息都不能漏，还要看出哪些能对应、哪些不能对应”时，适合全外连接。例如，做员工和部门的完整分配核对：既要看到已分配的员工，也要看到未分配的陈晨和暂无员工的财务部。它也常用于两份清单的对账。
+
+- 匹配成功的每组记录组合成一行；单侧未匹配记录各自形成一行，另一侧补为`NULL`。
+- 陈晨和财务部虽然都没有匹配，但不会被强行拼成一行。它们不满足连接条件，应分别保留。
+- 本例结果为4组匹配、1名未匹配员工、1个未匹配部门，共6行。
+- “两边都保留”不等于把两张表的行直接上下拼接，也不等于员工数加部门数。一对多匹配仍会生成多行。
+- MySQL示例中的`UNION ALL`用于上下拼接两个查询结果，两个查询的字段数量与对应位置必须一致。
+- 第二段只保留右侧未匹配记录，避免把已匹配的4组记录重复添加。不能简单把完整左连接和完整右连接用`UNION ALL`拼起来。
+
+![FULL OUTER JOIN：两边圆形全部着色，两侧未匹配记录分别保留](pics/full-outer-join.svg)
+
+| 记录情况 | 处理方式 |
+| --- | --- |
+| 张伟、李娜、王强、赵敏各自匹配部门 | 保留4组员工与部门 |
+| 陈晨没有部门 | 保留陈晨，部门字段补NULL |
+| 财务部没有员工 | 保留财务部，员工字段补NULL |
+
+#### 示例
+
+在MySQL中完整列出员工与部门的对应情况：
+
+```sql
+SELECT e.id AS employee_id, e.name AS employee_name,
+       d.id AS department_id, d.name AS department_name
+FROM employees AS e
+LEFT JOIN departments AS d ON e.department_id = d.id
+
+UNION ALL
+
+SELECT e.id, e.name, d.id, d.name
+FROM employees AS e
+RIGHT JOIN departments AS d ON e.department_id = d.id
+WHERE e.id IS NULL
+ORDER BY employee_id, department_id;
+```
+
+按照本节初始数据，预期结果为：
+
+| employee_id | employee_name | department_id | department_name |
+| --- | --- | --- | --- |
+| NULL | NULL | 4 | 财务部 |
+| 1 | 张伟 | 1 | 技术部 |
+| 2 | 李娜 | 1 | 技术部 |
+| 3 | 王强 | 2 | 市场部 |
+| 4 | 赵敏 | 3 | 人事部 |
+| 5 | 陈晨 | NULL | NULL |
+
+第一段保留全部员工，第二段通过`e.id IS NULL`找出没有员工的部门。最终的`ORDER BY`作用于合并后的整体结果。
 
 
 
 ### CROSS JOIN
 
-返回两个表的笛卡尔积，每条左表记录与每条右表记录进行组合。
+`CROSS JOIN`（交叉连接）把左表的每条记录与右表的每条记录配对，生成所有可能的组合，称为笛卡尔积。
+
+#### 语法
+
+```sql
+SELECT e.name AS employee_name, d.name AS department_name
+FROM employees AS e
+CROSS JOIN departments AS d;
+```
+
+这里不写`ON`，因为不根据所属部门筛选配对。
+
+#### 说明
+
+**什么时候使用？** 当你要列举“所有可能搭配”，而不是查询现有对应关系时。例如，为每名员工列出全部可考虑的部门，作为分配方案候选；或者把所有商品颜色和所有尺码组合成规格清单。
+
+- 本例有5名员工、4个部门，没有额外筛选时产生`5 × 4 = 20`行。
+- 张伟不仅会与技术部组合，还会与市场部、人事部、财务部组合。这些是候选搭配，不代表真实任职关系。
+- 陈晨也会与4个部门组合，因为交叉连接不检查其`department_id`。
+- 任意一张表没有记录时，就没有可配对对象，结果为0行。
+- 数据量会相乘。需要全部组合时才使用，后续加`WHERE`则可以进一步筛选组合。
+- MySQL允许`CROSS JOIN`使用类似内连接的语法，但本节按“无连接条件、生成全部组合”的用途学习，意图最清楚。
+
+#### 结构关系图
+
+下面的每个格子都代表一行结果：
+
+| 员工 × 部门 | 技术部 | 市场部 | 人事部 | 财务部 |
+| --- | --- | --- | --- | --- |
+| 张伟 | ✓ | ✓ | ✓ | ✓ |
+| 李娜 | ✓ | ✓ | ✓ | ✓ |
+| 王强 | ✓ | ✓ | ✓ | ✓ |
+| 赵敏 | ✓ | ✓ | ✓ | ✓ |
+| 陈晨 | ✓ | ✓ | ✓ | ✓ |
+
+交叉连接不适合用圆的重叠区域表示；这里的网格更直接地展示了20种组合。
+
+#### 示例
+
+为了让结果简短，先列出张伟可以考虑的全部部门：
+
+```sql
+SELECT e.name AS employee_name, d.name AS candidate_department
+FROM employees AS e
+CROSS JOIN departments AS d
+WHERE e.id = 1
+ORDER BY d.id;
+```
+
+| employee_name | candidate_department |
+| --- | --- |
+| 张伟 | 技术部 |
+| 张伟 | 市场部 |
+| 张伟 | 人事部 |
+| 张伟 | 财务部 |
+
+删除`WHERE e.id = 1`即可得到全部员工的20种组合。查询不会真的修改员工的部门。
 
 
 
 ### SELF JOIN
 
-将一个表与自身连接。
+自连接是让同一张表在一个查询中以不同角色参与连接。它不是一个名为`SELF JOIN`的SQL关键字，实际仍使用`INNER JOIN`、`LEFT JOIN`等。
+
+#### 语法
+
+```sql
+SELECT a.column_name, b.column_name
+FROM table_name AS a
+INNER JOIN table_name AS b
+    ON a.related_column = b.related_column;
+```
+
+两处`table_name`是同一张表，通过不同别名区分两个角色。
+
+#### 说明
+
+**什么时候使用？** 当需要比较同一张表中不同记录之间的关系时，例如找出同部门的同事、比较同表中的两个对象，或者查询员工与其主管。主管示例需要主管编号字段；当前表没有该字段，因此这里直接用“查找同部门同事”演示。
+
+- `a`与`b`表示员工表的两个角色，不会复制或创建新的实体表。
+- `a.department_id = b.department_id`筛选同部门的两名员工。
+- 还要排除“自己与自己”，并避免同时返回“张伟—李娜”和“李娜—张伟”。本例使用`a.id < b.id`，一次解决这两个问题。
+- 如果只使用`a.id <> b.id`，虽然排除了自己，但每对同事仍会以相反顺序出现两次。
+- `NULL = NULL`不会成立，所以不会把未分配部门的员工自动归为同一个部门。
+- 自连接描述的是参与连接的表相同，保留哪些未匹配记录仍取决于选择内连接还是外连接。
+
+#### 结构关系图
+
+同一张员工表，分别扮演“同事A”和“同事B”：
+
+| 同事A | 同事B | 判断 |
+| --- | --- | --- |
+| 张伟（id=1，部门1） | 张伟（id=1，部门1） | 自己，不满足1 < 1，排除 |
+| 张伟（id=1，部门1） | 李娜（id=2，部门1） | 同部门且1 < 2，保留 |
+| 李娜（id=2，部门1） | 张伟（id=1，部门1） | 反向重复，不满足2 < 1，排除 |
+| 张伟（部门1） | 王强（部门2） | 部门不同，排除 |
+
+#### 示例
+
+列出同部门的员工两两组合，每对同事只显示一次：
+
+```sql
+SELECT a.name AS colleague_a, b.name AS colleague_b,
+       a.department_id
+FROM employees AS a
+INNER JOIN employees AS b
+    ON a.department_id = b.department_id
+   AND a.id < b.id
+ORDER BY a.id, b.id;
+```
+
+| colleague_a | colleague_b | department_id |
+| --- | --- | --- |
+| 张伟 | 李娜 | 1 |
+
+当前只有技术部有两名员工，因此只有这一对。如果一个部门有3名员工，会形成3对不同的同事组合。
 
 
 
 ### NATURAL JOIN
 
-基于同名字段自动匹配连接的表。
+`NATURAL JOIN`（自然连接）自动找出两张表中所有同名字段，并要求这些字段分别相等。单独写`NATURAL JOIN`时采用内连接，只保留匹配组合。
+
+#### 语法
+
+```sql
+SELECT ...
+FROM table_a
+NATURAL JOIN table_b;
+```
+
+不再编写`ON`或`USING`，匹配条件由同名字段自动决定。
+
+#### 说明
+
+**什么时候使用？** 只有在两张表的同名字段确实都代表同一关联含义，而且你明确希望把全部同名字段作为匹配条件时，才适合使用。例如，两张表唯一同名字段都是`department_id`，且它们都代表部门编号。
+
+- “同名”并不意味着“含义相同”。当前员工表与部门表都有`id`和`name`，但分别表示员工编号、员工姓名和部门编号、部门名称，不适合直接自然连接。
+- 直接连接当前两张表，会隐含要求`e.id = d.id AND e.name = d.name`，而不是所需的`e.department_id = d.id`。当前数据因此返回空结果。
+- 自然连接的`SELECT *`会把同名连接字段合并显示为一列。
+- 如果没有任何同名字段，自然连接会产生笛卡尔积。
+- 后续新增同名字段可能悄悄改变匹配条件。实际写查询时，显式使用`JOIN ... ON ...`通常更便于检查。
+
+#### 结构关系图
+
+| 当前字段对应 | NATURAL JOIN是否自动比较 | 是否符合部门关联需求 |
+| --- | --- | --- |
+| employees.id ↔ departments.id | 是，同名 | 否，员工编号不是部门编号 |
+| employees.name ↔ departments.name | 是，同名 | 否，员工姓名不是部门名称 |
+| employees.department_id ↔ departments.id | 否，不同名 | 是，这才是需要的关系 |
+
+#### 示例
+
+先观察直接自然连接的结果：
+
+```sql
+SELECT e.id, e.name
+FROM employees AS e
+NATURAL JOIN departments AS d;
+```
+
+按本节初始数据，结果为空。原因是没有员工与部门同时满足编号和名称相等，并不是数据库没有员工或部门。
+
+为了展示正确用法，可以在查询中临时把部门表字段改成`department_id`和`department_name`，使两边仅有`department_id`同名：
+
+```sql
+SELECT e.id AS employee_id, e.name AS employee_name,
+       d.department_name
+FROM employees AS e
+NATURAL JOIN (
+    SELECT id AS department_id, name AS department_name
+    FROM departments
+) AS d
+ORDER BY e.id;
+```
+
+括号中的查询产生一份临时查询结果，并命名为`d`，不修改原表。这涉及派生表，当前只需理解它在这里用于临时调整列名。
+
+| employee_id | employee_name | department_name |
+| --- | --- | --- |
+| 1 | 张伟 | 技术部 |
+| 2 | 李娜 | 技术部 |
+| 3 | 王强 | 市场部 |
+| 4 | 赵敏 | 人事部 |
+
+两边唯一同名字段现在是`department_id`，所以匹配符合预期；陈晨没有匹配部门，仍被排除。用之前学过的`INNER JOIN ... ON e.department_id = d.id`表达同一需求更直接。
+
+有关MySQL连接语法及自然连接规则，可参阅[MySQL官方JOIN文档](https://dev.mysql.com/doc/refman/8.4/en/join.html)。
 
 
 
